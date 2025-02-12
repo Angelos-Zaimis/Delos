@@ -12,10 +12,11 @@ pub struct Block {
     pub hash: String,
     pub data: String,
     pub nonce: u64,
+    pub difficulty: u32,
 }
 
 impl Block {
-    pub fn new(index: u64, previous_hash: String, data: String) -> Self {
+    pub fn new(index: u64, previous_hash: String, data: String, difficulty: u32) -> Self {
         let timestamp  = Self::current_timestamp();
         let nonce: u64 = 0;
         let hash = Block::calculate_hash(index, &timestamp, &previous_hash, &data, nonce);
@@ -26,7 +27,8 @@ impl Block {
             previous_hash,
             hash,
             data,
-            nonce
+            nonce,
+            difficulty
         }
     }
 
