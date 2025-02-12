@@ -1,6 +1,7 @@
-use blockchain::{Block, Blockchain};
-
+mod network;
 mod blockchain;
 
-fn main() {
+#[tokio::main]
+async fn main() {
+    network::run_server().await;
 }

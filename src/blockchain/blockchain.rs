@@ -1,27 +1,28 @@
-use chrono::Utc;
-
-use super::Block;
+use crate::blockchain::ledger::Ledger;
+use crate::blockchain::transaction::Transaction;
 
 #[derive(Debug)]
 pub struct Blockchain {
-    chain: Vec<Block>
+    pub ledger: Ledger
 }
 
 impl Blockchain {
     pub fn new() -> Self {
-        let genesis_block = Block::new(0, "Genesis Block".to_owned(), String::new());
-        Blockchain {
-            chain: vec![genesis_block],
+        Self {
+            ledger: Ledger::new()
         }
     }
 
-    pub fn add_block(&mut self, data: String) {
-        let previous_hash = self.chain.last().unwrap().hash.clone();
-        let new_block = Block::new(Self::current_timestamp(), data, previous_hash);
-        self.chain.push(new_block);
+    pub fn add_transaction(&mut self, sender: String, recipient: String, amount: f64, signature: String) {
+        let transaction = Transaction::new(sender, recipient, amount, signature);
+        self.ledger.add_transaction(transaction);
     }
-    
-    fn current_timestamp() -> i64 {
-        Utc::now().timestamp()
+
+    pub fn mine_block(&mut self) {
+        self.ledger.mine_block();
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.ledger.is_valid_chain()
     }
 }
