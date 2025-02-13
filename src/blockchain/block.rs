@@ -2,7 +2,6 @@ use sha2::{Sha256, Digest};
 use std::fmt::Write;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use sha2::digest::Update;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
@@ -32,21 +31,24 @@ impl Block {
         }
     }
 
-    pub fn calculate_hash(index: u64, &timestamp: &str, previous_hash: &str, &data: &str, nonce: u64) -> String {
+    pub fn calculate_hash(index: u64, timestamp: &String, previous_hash: &String, data: &String, nonce: u64) -> String {
         let mut hash = Sha256::new();
         hash.update(index.to_le_bytes());
         hash.update(timestamp.to_string().as_bytes());
         hash.update(previous_hash.as_bytes());
         hash.update(data.as_bytes());
         hash.update(nonce.to_le_bytes());
+
         let final_hash = hash.finalize();
 
         let mut hash_str = String::new();
         for byte in final_hash {
             write!(&mut hash_str, "{:02x}", byte).expect("Unable to write");
         }
+
         hash_str
     }
+
 
     fn current_timestamp() -> String {
         Utc::now().timestamp().to_string()

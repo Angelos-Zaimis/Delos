@@ -1,9 +1,13 @@
-#[derive(Debug)]
+use serde::Deserialize;
+const BASE_FEE: f64 = 0.01;
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Transaction {
-    sender: String,
-    recipient: String,
-    amount: f64,
-    signature: String,
+    pub sender: String,
+    pub recipient: String,
+    pub amount: f64,
+    pub signature: String,
+    pub fee: f64,
 }
 
 impl Transaction {
@@ -12,10 +16,11 @@ impl Transaction {
             sender,
             recipient,
             amount,
-            signature
+            signature,
+            fee: BASE_FEE
         }
     }
     pub fn is_valid(&self) -> bool {
-        self.amount > 0.0 && !self.sender.is_empty() && !self.recipient.is_empty()
+        self.amount > 0.0 && self.fee >= 0.0 && !self.sender.is_empty() && !self.recipient.is_empty()
     }
 }
