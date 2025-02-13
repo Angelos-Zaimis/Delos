@@ -18,8 +18,8 @@ impl Blockchain {
         self.ledger.add_transaction(transaction);
     }
 
-    pub fn mine_block(&mut self) {
-        self.ledger.mine_block();
+    pub fn mine_block(&mut self, miner_address: &str) {
+        self.ledger.mine_block(miner_address);
     }
 
     pub fn is_valid(&self) -> bool {
