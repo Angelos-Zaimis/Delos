@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use rocksdb::{DBWithThreadMode, Options, SingleThreaded, DB};
 use super::transaction::Transaction;
 use crate::blockchain::Block;
+use super::wallet::Wallet;
 
 const BLOCK_TARGET_TIME: u64 = 10;
 const ADJUSTMENT_BLOCK_COUNT: usize = 5;
@@ -16,6 +17,7 @@ pub struct Ledger {
     pub difficulty: u32,
     pub db: DB,
     pub total_fees_collected: f64,
+    pub miner_wallet: Wallet,
 }
 
 impl Ledger {
@@ -32,6 +34,9 @@ impl Ledger {
             chain.push(genesis_block);
         }
 
+        let miner_wallet = Wallet::new();
+        println!("Miner Wallet Address: {}", miner_wallet.address);
+
         Self {
             chain,
             mempool,
@@ -39,6 +44,7 @@ impl Ledger {
             difficulty: 2,
             db,
             total_fees_collected: 0.0,
+            miner_wallet,
         }
     }
 
@@ -91,9 +97,9 @@ impl Ledger {
         }
     }
 
-    pub fn mine_block(&mut self, miner_address: &str) {
+    pub fn mine_block(&mut self) {
         if self.mempool.len() < MIN_TRANSACTIONS_FOR_BLOCK {
-            println!("Not enough transactions in the mempool to mine a block. Waiting...");
+            println!("⏳ Not enough transactions in the mempool to mine a block. Waiting...");
             return;
         }
 
@@ -103,7 +109,9 @@ impl Ledger {
 
         let data: String = format!("{:?}", selected_transactions);
         let target_prefix = "0".repeat(self.difficulty as usize);
-        self.start_mining(target_prefix, &data, miner_address, total_fees);
+
+        let miner_address = self.miner_wallet.address.clone();
+        self.start_mining(target_prefix, &data, &miner_address, total_fees);
     }
 
     fn start_mining(&mut self, target_prefix: String, data: &str, miner_address: &str, total_fees: f64) {
