@@ -1,3 +1,4 @@
+use secp256k1::PublicKey;
 use crate::blockchain::ledger::Ledger;
 use crate::blockchain::transaction::Transaction;
 
@@ -13,13 +14,13 @@ impl Blockchain {
         }
     }
 
-    pub fn add_transaction(&mut self, sender: String, recipient: String, amount: f64, signature: String) {
+    pub fn add_transaction(&mut self, sender: String, recipient: String, amount: f64, signature: String, public_key: PublicKey) {
         let transaction = Transaction::new(sender, recipient, amount, signature);
-        self.ledger.add_transaction(transaction);
+        self.ledger.add_transaction(transaction, &public_key);
     }
 
-    pub fn mine_block(&mut self, miner_address: &str) {
-        self.ledger.mine_block(miner_address);
+    pub fn mine_block(&mut self) {
+        self.ledger.mine_block();
     }
 
     pub fn is_valid(&self) -> bool {
