@@ -1,8 +1,10 @@
-use std::collections::HashMap;
-use rocksdb::{DBWithThreadMode, Options, SingleThreaded, DB};
 use super::transaction::Transaction;
-use crate::blockchain::Block;
 use super::wallet::Wallet;
+use crate::blockchain::signature_handler::SignatureHandler;
+use crate::blockchain::Block;
+use rocksdb::{DBWithThreadMode, Options, SingleThreaded, DB};
+use secp256k1::PublicKey;
+use std::collections::HashMap;
 
 const BLOCK_TARGET_TIME: u64 = 10;
 const ADJUSTMENT_BLOCK_COUNT: usize = 5;
@@ -75,7 +77,7 @@ impl Ledger {
         HashMap::new()
     }
 
-    pub fn add_transaction(&mut self, transaction: Transaction) {
+    pub fn add_transaction(&mut self, transaction: Transaction, sender_public_key: &PublicKey) {
         let sender_balance = self.balances.get(&transaction.sender).unwrap_or(&0.0);
         let total_cost = transaction.amount + transaction.fee;
 
@@ -84,18 +86,20 @@ impl Ledger {
             return;
         }
 
-        if transaction.is_valid() {
-            self.deduct_total_amount_from_sender(&transaction, total_cost);
-            self.add_received_amount_to_recipient(&transaction);
-
-            self.mempool.push(transaction);
-            self.save_balances();
-            self.save_mempool();
-            println!("Transaction added to mempool.");
-        } else {
-            println!("Invalid transaction!");
+        if !SignatureHandler::verify_signature(sender_public_key, &transaction.hash(), &transaction.signature) {
+            println!("Invalid transaction signature! Rejecting transaction.");
+            return;
         }
+
+        self.deduct_total_amount_from_sender(&transaction, total_cost);
+        self.add_received_amount_to_recipient(&transaction);
+
+        self.mempool.push(transaction);
+        self.save_balances();
+        self.save_mempool();
+        println!("✅ Transaction added to mempool.");
     }
+
 
     pub fn mine_block(&mut self) {
         if self.mempool.len() < MIN_TRANSACTIONS_FOR_BLOCK {
@@ -112,6 +116,11 @@ impl Ledger {
 
         let miner_address = self.miner_wallet.address.clone();
         self.start_mining(target_prefix, &data, &miner_address, total_fees);
+    }
+
+    fn select_transactions_for_block(&mut self) -> Vec<Transaction> {
+        self.mempool.sort_by(|a, b| b.fee.partial_cmp(&a.fee).unwrap());
+        self.mempool.clone()
     }
 
     fn start_mining(&mut self, target_prefix: String, data: &str, miner_address: &str, total_fees: f64) {

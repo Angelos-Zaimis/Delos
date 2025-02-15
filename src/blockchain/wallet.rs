@@ -1,6 +1,7 @@
-use secp256k1::{Secp256k1, SecretKey, PublicKey};
-use rand::rngs::OsRng;
+use secp256k1::{SecretKey, PublicKey};
+use super::transaction::Transaction;
 use sha2::{Sha256, Digest};
+use crate::blockchain::signature_handler::SignatureHandler;
 
 #[derive(Debug)]
 pub struct Wallet {
@@ -11,10 +12,7 @@ pub struct Wallet {
 
 impl Wallet {
     pub fn new() -> Self {
-        let secp = Secp256k1::new();
-        let mut rng = OsRng;
-        let private_key = SecretKey::new(&mut rng);
-        let public_key = PublicKey::from_secret_key(&secp, &private_key);
+        let (private_key, public_key) = SignatureHandler::generate_keys();
 
         let mut hasher = Sha256::new();
         hasher.update(public_key.to_string().as_bytes());
@@ -27,4 +25,7 @@ impl Wallet {
             address
         }
     }
+
+    pub fn sign_transaction(&self,  transaction: &mut Transaction) {
+        transaction.signature = SignatureHandler::sign_message(&self.private_key, &transaction.hash()).to_string();     }
 }
