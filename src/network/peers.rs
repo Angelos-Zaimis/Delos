@@ -4,6 +4,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use std::sync::Arc;
+use crate::blockchain::Block;
+
+
+
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Peer {
@@ -118,12 +122,20 @@ impl PeerManager {
         println!("Sent peer list: {}", serialized_peers);
         Ok(())
     }
-    async fn start_reading(&self, socket: &mut TcpStream, buffer: &mut Vec<u8>) -> std::io::Result<usize> {
+
+    pub async fn start_reading(&self, socket: &mut TcpStream, buffer: &mut Vec<u8>) -> std::io::Result<usize> {
         socket.read(buffer).await
     }
 
     pub async fn connect_to_server(&self, address: &str) -> tokio::net::TcpStream {
         TcpStream::connect(address).await.expect("Failed to connect to server")
     }
-    
+
+    pub async fn connect_to_server_static(address: &str) -> tokio::net::TcpStream {
+        TcpStream::connect(address).await.expect("Failed to connect to server")
+    }
+
+    pub async fn start_reading_static(socket: &mut TcpStream, buffer: &mut Vec<u8>) -> std::io::Result<usize> {
+        socket.read(buffer).await
+    }
 }

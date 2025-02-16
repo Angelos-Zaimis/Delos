@@ -3,11 +3,13 @@
 use std::sync::Arc;
 use rocksdb::{Options, DB};
 use tokio::sync::Mutex;
+use crate::blockchain::Ledger;
 use crate::network::{run_server, PeerManager, };
-use crate::network::peers::{Peer, SharedPeerManager};
+use crate::network::peers::{Peer};
 
 mod network;
 mod blockchain;
+mod r#enum;
 
 #[tokio::main]
 async fn main() {
@@ -24,12 +26,14 @@ async fn main() {
     let db = Arc::new(DB::open(&opts, db_path).expect("Failed to open RocksDB for peers"));
 
     let peer_manager: Arc<Mutex<PeerManager>> = Arc::new(Mutex::new(PeerManager::new(db.clone())));
+    let ledger = Arc::new(Mutex::new(Ledger::new("data/blockchain_db", true)));
 
     if args.len() > 1 && args[1] == "peers" {
         let peer_id = format!("peer_{}", args[2]);
         let peer_address = format!("127.0.0.1:{}", 6000 + args[2].parse::<u16>().unwrap_or(1));
 
         let peer_manager_clone = Arc::clone(&peer_manager);
+        let ledger_clone = Arc::clone(&ledger);
 
         tokio::spawn(async move {
             let mut peer_manager_lock = peer_manager_clone.lock().await;
@@ -40,10 +44,13 @@ async fn main() {
 
             drop(peer_manager_lock);
 
-            let peer_manager_lock = peer_manager_clone.lock().await;
-            peer_manager_lock.connect_to_peer("127.0.0.1:6000").await;
+            let mut ledger_lock = ledger_clone.lock().await;
+            ledger_lock.request_blockchain("127.0.0.1:6000").await;
         }).await.unwrap();
     } else {
-        run_server(peer_manager).await;
+        run_server(peer_manager, ledger).await;
     }
 }
+
+
+

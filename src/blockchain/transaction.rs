@@ -1,5 +1,7 @@
+use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use crate::blockchain::signature_handler::SignatureHandler;
 
 const BASE_FEE: f64 = 0.01;
 
@@ -22,8 +24,12 @@ impl Transaction {
             fee: BASE_FEE
         }
     }
-    pub fn is_valid(&self) -> bool {
-        self.amount > 0.0 && self.fee >= 0.0 && !self.sender.is_empty() && !self.recipient.is_empty()
+
+    pub fn is_valid(&self, public_key: &PublicKey) -> bool {
+        if self.amount <= 0.0 || self.fee < 0.0 || self.sender.is_empty() || self.recipient.is_empty() {
+            return false;
+        }
+        SignatureHandler::verify_signature(public_key, &self.hash(), &self.signature)
     }
 
     pub fn hash(&self) -> String {
