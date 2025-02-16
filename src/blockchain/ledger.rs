@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 use super::transaction::Transaction;
 use super::wallet::Wallet;
 use crate::blockchain::signature_handler::SignatureHandler;
@@ -5,6 +7,10 @@ use crate::blockchain::Block;
 use rocksdb::{DBWithThreadMode, Options, SingleThreaded, DB};
 use secp256k1::PublicKey;
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use crate::network::PeerManager;
 
 const BLOCK_TARGET_TIME: u64 = 10;
 const ADJUSTMENT_BLOCK_COUNT: usize = 5;
@@ -23,21 +29,38 @@ pub struct Ledger {
 }
 
 impl Ledger {
-    pub fn new() -> Self {
+
+    pub fn new(db_path: &str, read_only: bool) -> Self {
         let mut opts = Options::default();
         opts.create_if_missing(true);
-        let db = DB::open(&opts, "data/blockchain_db").expect("Failed to open RocksDB");
+
+        // 🔍 Ensure database exists before opening in read-only mode
+        if read_only {
+            if !Path::new(db_path).exists() || fs::read_dir(db_path).unwrap().next().is_none() {
+                println!("⚠️ Database does not exist or is empty. Creating it first...");
+                let _ = DB::open(&opts, db_path).expect("Failed to create RocksDB");
+            }
+        }
+
+        // Now open the DB in the requested mode
+        let db = if read_only {
+            DB::open_for_read_only(&opts, db_path, false).expect("Failed to open RocksDB in read-only mode")
+        } else {
+            DB::open(&opts, db_path).expect("Failed to open RocksDB")
+        };
+
         let mut chain: Vec<Block> = Self::load_chain_from_db(&db);
         let mempool: Vec<Transaction> = Self::load_transactions_from_db(&db);
         let balances = Self::load_balances_from_db(&db);
 
         if chain.is_empty() {
+            println!("⛓️ Creating Genesis Block...");
             let genesis_block = Block::new(0, String::from("0"), String::from("Genesis block"), 2);
             chain.push(genesis_block);
         }
 
         let miner_wallet = Wallet::new();
-        println!("Miner Wallet Address: {}", miner_wallet.address);
+        println!("💰 Miner Wallet Address: {}", miner_wallet.address);
 
         Self {
             chain,
@@ -78,16 +101,16 @@ impl Ledger {
     }
 
     pub fn add_transaction(&mut self, transaction: Transaction, sender_public_key: &PublicKey) {
+        if !transaction.is_valid(sender_public_key) {
+            println!("Invalid transaction! Rejecting.");
+            return;
+        }
+
         let sender_balance = self.balances.get(&transaction.sender).unwrap_or(&0.0);
         let total_cost = transaction.amount + transaction.fee;
 
         if *sender_balance < total_cost {
-            println!("Sender {} has insufficient funds!", transaction.sender);
-            return;
-        }
-
-        if !SignatureHandler::verify_signature(sender_public_key, &transaction.hash(), &transaction.signature) {
-            println!("Invalid transaction signature! Rejecting transaction.");
+            println!("Insufficient funds!");
             return;
         }
 
@@ -95,9 +118,8 @@ impl Ledger {
         self.add_received_amount_to_recipient(&transaction);
 
         self.mempool.push(transaction);
-        self.save_balances();
         self.save_mempool();
-        println!("✅ Transaction added to mempool.");
+        println!("Transaction added.");
     }
 
 
@@ -176,12 +198,12 @@ impl Ledger {
             .and_modify(|bal| *bal -= total_cost);
     }
 
-    fn save_chain(&self) {
+    pub(crate) fn save_chain(&self) {
         let serialized_chain = serde_json::to_string(&self.chain).unwrap();
         self.db.put("blockchain", serialized_chain).expect("Failed to save blockchain");
     }
 
-    fn save_mempool(&self) {
+    pub(crate) fn save_mempool(&self) {
         let serialized_mempool = serde_json::to_string(&self.mempool).unwrap(); // Fixed incorrect field reference
         self.db.put("mempool", serialized_mempool).expect("Failed to save mempool");
     }
@@ -196,27 +218,73 @@ impl Ledger {
         self.db.put("total_fees", serialized_fees).expect("Failed to save total fees");
     }
 
+    pub async fn request_blockchain(&mut self, peer_address: &str) {
+        let mut socket = PeerManager::connect_to_server_static(peer_address).await;
+
+        let request_message = "REQUEST_BLOCKCHAIN";
+        if let Err(e) = socket.write_all(request_message.as_bytes()).await {
+            eprintln!("Failed to send blockchain request: {}", e);
+            return;
+        }
+        println!("Sent blockchain request to {}", peer_address);
+
+        let mut buffer = vec![0; 8192];
+        let reader = match socket.read(&mut buffer).await {
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("Failed to read blockchain data: {}", e);
+                return;
+            }
+        };
+
+        if reader == 0 {
+            println!("No blockchain data received.");
+            return;
+        }
+
+        let received_chain: Vec<Block> = match serde_json::from_slice(&buffer[..reader]) {
+            Ok(chain) => chain,
+            Err(e) => {
+                eprintln!("Failed to parse blockchain data: {}", e);
+                return;
+            }
+        };
+
+        println!("Received blockchain from peer {}: {} blocks", peer_address, received_chain.len());
+
+        let mut peer_blockchain = self.chain.clone();
+        if received_chain.len() > peer_blockchain.len() {
+            println!("📢 Replacing local blockchain with longer chain from peer.");
+            self.chain = received_chain;
+            self.save_chain();
+        } else {
+            println!("Local blockchain is already up-to-date.");
+        }
+    }
+
+
     fn adjust_difficulty(&mut self) {
         if self.chain.len() < ADJUSTMENT_BLOCK_COUNT {
             return;
         }
 
-        let last_n_block: &[Block] = &self.chain[self.chain.len() - ADJUSTMENT_BLOCK_COUNT..];
-        let first_block: &Block = &last_n_block[0];
-        let last_block: &Block = last_n_block.last().unwrap();
+        let last_n_blocks: &[Block] = &self.chain[self.chain.len() - ADJUSTMENT_BLOCK_COUNT..];
+        let first_block = &last_n_blocks[0];
+        let last_block = last_n_blocks.last().unwrap();
 
         let actual_time = last_block.timestamp.parse::<u64>().unwrap_or(0)
-            - first_block.timestamp.parse::<u64>().unwrap_or(0); // Fixed possible parse error
+            - first_block.timestamp.parse::<u64>().unwrap_or(0);
         let expected_time = BLOCK_TARGET_TIME * ADJUSTMENT_BLOCK_COUNT as u64;
 
         if actual_time < expected_time / 2 {
             self.difficulty += 1;
-            println!("⚡ Mining too fast. Increasing difficulty to {}", self.difficulty);
+            println!("⚡ Increasing difficulty to {}", self.difficulty);
         } else if actual_time > expected_time * 2 {
             self.difficulty = self.difficulty.saturating_sub(1);
-            println!("🐢 Mining too slow. Decreasing difficulty to {}", self.difficulty);
+            println!("🐢 Decreasing difficulty to {}", self.difficulty);
         }
     }
+
 
     pub fn is_valid_chain(&self) -> bool {
         for i in 1..self.chain.len() {

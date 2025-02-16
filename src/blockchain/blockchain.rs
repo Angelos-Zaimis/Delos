@@ -10,7 +10,7 @@ pub struct Blockchain {
 impl Blockchain {
     pub fn new() -> Self {
         Self {
-            ledger: Ledger::new()
+            ledger: Ledger::new("data/blockchain_db", true)
         }
     }
 
