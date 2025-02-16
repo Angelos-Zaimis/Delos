@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 use super::transaction::Transaction;
 use super::wallet::Wallet;
 use crate::blockchain::signature_handler::SignatureHandler;

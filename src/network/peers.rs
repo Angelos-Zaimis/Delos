@@ -2,6 +2,8 @@ use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Peer {
@@ -9,26 +11,34 @@ pub struct Peer {
     pub address: String,
 }
 
-pub struct PeerManager {
+pub struct  PeerManager {
     peers: Vec<Peer>,
-    db: DB
+    db: Arc<DB>
 }
 
-impl PeerManager {
-    pub fn new() -> Self {
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        let db = DB::open(&opts, "data/peers_db").expect("Failed to open RocksDB for peers");
 
+pub type SharedPeerManager = Arc<Mutex<PeerManager>>;
+impl PeerManager {
+    pub fn new(db: Arc<DB>) -> Self {
         PeerManager {
             peers: Vec::new(),
-            db
+            db,
         }
     }
 
     pub fn add_peer(&self, peer: &Peer) {
-        let new_peer = serde_json::to_string(peer).expect("Fail to serialize new peer");
-        self.db.put(&peer.id, new_peer).unwrap()
+        let mut all_peers = self.get_all_peers();
+
+        if all_peers.iter().any(|p| p.id == peer.id) {
+            println!("⚠Peer {} is already known, skipping storage.", peer.address);
+            return;
+        }
+
+        let new_peer = serde_json::to_string(peer).expect("Failed to serialize new peer");
+        self.db.put(&peer.id, new_peer).unwrap();
+
+        println!("Stored new peer: {}", peer.address);
+
     }
 
     pub fn get_peer(&self, peer_id: &str) -> Option<Peer> {
@@ -53,8 +63,8 @@ impl PeerManager {
         peers
     }
 
-    pub fn store_peers(&self, peers: &mut Vec<Peer>) {
-        for peer in peers.iter_mut() {
+    pub fn store_peers(&self, peers: &Vec<Peer>) {
+        for peer in peers.iter() {
             self.add_peer(peer);
         }
     }
@@ -65,45 +75,55 @@ impl PeerManager {
         })
     }
 
-    pub async fn connect_to_peer(address: &str, peer_manager: &PeerManager) {
-        let mut socket = Self::connect_to_server(address).await;
+    pub async fn connect_to_peer(&self, address: &str) {
+        let mut socket = self.connect_to_server(address).await;
 
-        let all_peers = peer_manager.get_all_peers();
 
-        Self::send_peers(&mut socket, &all_peers).await;
+        let all_peers = self.get_all_peers();
+
+        if let Err(e) = self.send_peers(&mut socket, &all_peers).await {
+            eprintln!("Failed to send peer list: {}", e);
+            return;
+        }
 
         let mut buffer = vec![0; 1024];
-        let reader = Self::start_reading(&mut socket, &mut buffer).await;
 
-        let received_message = String::from_utf8_lossy(&buffer[..reader]);
-        println!("Received: {}", received_message);
-    }
-
-    async fn start_reading(socket: &mut TcpStream, buffer: &mut Vec<u8>) -> usize {
-        match socket.read(buffer).await {
-            Ok(0) => {
-                println!("Connection closed by server");
-                0
-            }
-            Ok(n) => n,
+        let reader = match self.start_reading(&mut socket, &mut buffer).await {
+            Ok(size) => size,
             Err(e) => {
-                eprintln!("Failed to read from server: {}", e);
-                0
+                eprintln!("Error reading from socket: {}", e);
+                return;
             }
+        };
+
+        let received_data = String::from_utf8_lossy(&buffer[..reader]);
+
+        println!("Received from server: {}", received_data);
+
+        if let Ok(received_peers) = serde_json::from_str::<Vec<Peer>>(&received_data) {
+            for peer in received_peers {
+                if peer.address != address {
+                    println!("Discovered new peer: {}", peer.address);
+                    self.add_peer(&peer);
+                }
+            }
+        } else {
+            println!("Received invalid peer data");
         }
     }
 
-    async fn send_peers(socket: &mut TcpStream, peers: &Vec<Peer>) {
-        let serialized_peers = serde_json::to_string(peers).expect("Failed to serialize peer");
-
-        socket.write_all(serialized_peers.as_bytes()).await.unwrap_or_else(|e| {
-            eprintln!("Write failed: {}", e);
-        });
-
+    pub async fn send_peers(&self, socket: &mut TcpStream, peers: &Vec<Peer>) -> Result<(), std::io::Error> {
+        let serialized_peers = serde_json::to_string(peers).expect("Failed to serialize peers");
+        socket.write_all(serialized_peers.as_bytes()).await?;
         println!("Sent peer list: {}", serialized_peers);
+        Ok(())
+    }
+    async fn start_reading(&self, socket: &mut TcpStream, buffer: &mut Vec<u8>) -> std::io::Result<usize> {
+        socket.read(buffer).await
     }
 
-    async fn connect_to_server(address: &str) -> TcpStream {
+    pub async fn connect_to_server(&self, address: &str) -> tokio::net::TcpStream {
         TcpStream::connect(address).await.expect("Failed to connect to server")
     }
+    
 }

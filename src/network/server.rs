@@ -1,26 +1,38 @@
 use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::network::PeerManager;
-use crate::network::peers::Peer;
+use crate::network::peers::{Peer, SharedPeerManager};
+use std::sync::Arc;
 
-pub async fn run_server( peer_manager: &mut PeerManager) {
+pub async fn run_server(peer_manager: SharedPeerManager) {
     let listener = start_listener().await;
+    println!("Listening at port 6000...");
 
     loop {
         let (mut socket, _) = accepting_connections(&listener).await;
+        let peer_manager_clone = Arc::clone(&peer_manager);
 
         tokio::spawn(async move {
             let mut buffer = vec![0; 1024];
 
             loop {
-                let reader = reading_from_socket(&mut socket, &mut buffer,peer_manager).await;
+                let reader = {
+                    let mut peer_manager_lock = peer_manager_clone.lock().await;
+                    reading_from_socket(&mut socket, &mut buffer, &mut peer_manager_lock).await
+                };
 
                 if reader == 0 {
                     break;
                 }
 
-                let known_peers = peer_manager.get_all_peers();
+                let known_peers = {
+                    let peer_manager_lock = peer_manager_clone.lock().await;
+                    peer_manager_lock.get_all_peers()
+                };
+
                 let serialized_peers = serde_json::to_string(&known_peers).expect("Failed to serialize peers");
+
+                println!("Sending peer list to client: {:?}", &serialized_peers);
 
                 if let Err(e) = socket.write_all(serialized_peers.as_bytes()).await {
                     eprintln!("Write failed: {}", e);
@@ -30,6 +42,7 @@ pub async fn run_server( peer_manager: &mut PeerManager) {
         });
     }
 }
+
 
 async fn start_listener() -> TcpListener {
     TcpListener::bind("127.0.0.1:6000")
@@ -51,12 +64,13 @@ async fn reading_from_socket(socket: &mut TcpStream, buffer: &mut Vec<u8>, peer_
             println!("Received message: {}", received_data);
 
             if let Ok(received_peers) = serde_json::from_str::<Vec<Peer>>(&received_data) {
-                let peers = &received_peers;
+
                 for peer in received_peers {
+                    println!("Adding new peer: {}", peer.address);
                     peer_manager.add_peer(&peer);
                 }
 
-                println!("Added {} new peers", &peers.len());
+                println!("Added new peers");
             } else {
                 println!("⚠️ Received invalid peer data");
             }
